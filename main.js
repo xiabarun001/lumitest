@@ -8,10 +8,15 @@ import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-// 机器本地配置(名字、端口覆盖):优先读自己目录的 .env(独立部署),
-// 没有再读 ../qa-automation/.env(与上级测试框架共用一份时);都不入库
-try { process.loadEnvFile(path.join(__dirname, '.env')); } catch {
-  try { process.loadEnvFile(path.join(__dirname, '..', 'qa-automation', '.env')); } catch {}
+// 机器本地配置(名字、端口覆盖),按顺序找到哪份读哪份,都不入库:
+// ① 自己目录 .env(源码独立部署) ② ../qa-automation/.env(funda-test 里共用)
+// ③ 系统用户目录(打包成 .app 后前两处不存在,用这里:~/Library/Application Support/<名>/.env)
+for (const p of [
+  path.join(__dirname, '.env'),
+  path.join(__dirname, '..', 'qa-automation', '.env'),
+  path.join(app.getPath('userData'), '.env'),
+]) {
+  try { process.loadEnvFile(p); break; } catch {}
 }
 const PORT = Number(process.env.PET_PORT || 38999);
 const OWNER = (process.env.PET_OWNER || '').trim();

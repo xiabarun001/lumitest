@@ -86,3 +86,12 @@ PET_PORT=38999      # 通知端口,冲突时改
 ## License
 
 Code: [MIT](LICENSE). Cat images in `assets/`: belong to their original creators, used non-commercially; removed upon request.
+
+## 打包成独立应用
+
+```bash
+npm run pack:mac    # macOS:产物在 dist/mac-arm64/Lumitest.app,拖进「应用程序」即可
+npm run pack:win    # Windows:便携版 exe 在 dist/
+```
+
+打包版读取的配置在系统用户目录(macOS 为 `~/Library/Application Support/Lumitest/.env`)。
