@@ -1,0 +1,19 @@
+{
+  "name": "lumitest",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Lumitest:桌面测试小助手桌宠,测试跑完/出问题/需要人介入时提醒你",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/xiabarun001/lumitest.git"
+  },
+  "main": "main.js",
+  "scripts": {
+    "start": "electron ."
+  },
+  "devDependencies": {
+    "electron": "^38.0.0"
+  }
+}
