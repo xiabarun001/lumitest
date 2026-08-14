@@ -9,7 +9,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // 机器本地配置(名字、端口覆盖),按顺序找到哪份读哪份,都不入库:
-// ① 自己目录 .env(源码独立部署) ② ../qa-automation/.env(funda-test 里共用)
+// ① 自己目录 .env(源码独立部署) ② ../qa-automation/.env(与上级测试框架共用时)
 // ③ 系统用户目录(打包成 .app 后前两处不存在,用这里:~/Library/Application Support/<名>/.env)
 for (const p of [
   path.join(__dirname, '.env'),
