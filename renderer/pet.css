@@ -109,6 +109,28 @@ body { display: flex; flex-direction: column; justify-content: flex-end; align-i
 }
 .state-hello { animation: bounce 0.55s ease-in-out infinite; }
 .state-petted { animation: purr 0.9s ease-in-out infinite; }
+.state-sleep { animation: breathe 3.2s ease-in-out infinite; }
+@keyframes breathe {
+  0%, 100% { transform: translateY(2px) scale(1, 0.97); }
+  50% { transform: translateY(0) scale(1, 1.01); }
+}
+
+/* 移动中的步态(方向翻转由皮肤 scaleX 承担,这里只管节奏) */
+.moving-walk { animation: waddle 0.4s linear infinite; }
+@keyframes waddle {
+  0%, 100% { transform: translateY(0) rotate(-2.5deg); }
+  50% { transform: translateY(-4px) rotate(2.5deg); }
+}
+.moving-dash { animation: sprint 0.18s linear infinite; }
+@keyframes sprint {
+  0%, 100% { transform: translateY(0) scale(1.06, 0.94); }
+  50% { transform: translateY(-7px) scale(0.96, 1.05); }
+}
+.moving-fall { animation: flail 0.3s linear infinite; }
+@keyframes flail {
+  0%, 100% { transform: rotate(-6deg); }
+  50% { transform: rotate(6deg); }
+}
 @keyframes purr {
   0%, 100% { transform: rotate(-2.5deg) translateY(0); }
   50% { transform: rotate(2.5deg) translateY(-3px); }
@@ -126,6 +148,26 @@ body { display: flex; flex-direction: column; justify-content: flex-end; align-i
   from { opacity: 1; transform: translateY(0) scale(0.8); }
   to { opacity: 0; transform: translateY(-32px) scale(1.35); }
 }
+
+/* 全过彩带 */
+.confetti {
+  position: absolute;
+  width: 7px; height: 10px;
+  border-radius: 2px;
+  pointer-events: none;
+  z-index: 9;
+  animation: confettiFall 1.2s ease-in forwards;
+}
+@keyframes confettiFall {
+  0% { opacity: 1; }
+  100% { opacity: 0; translate: 0 150px; rotate: 540deg; }
+}
+
+/* 内置形象睡觉:闭眼(眼皮常驻) */
+.state-sleep .eyes-normal .eyelid { animation: none; transform: scaleY(1); }
+.state-sleep .mouth-idle { display: none; }
+.state-sleep .mouth-worried { display: block; }
+.state-sleep .bulb { fill: #64748b; }
 
 /* 被摸时的粉色小气泡 */
 .bubble.type-pet { background: #fdf2f8; border-color: #fbcfe8; }

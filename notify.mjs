@@ -2,11 +2,11 @@
 // 桌宠没在跑也不报错(返回 false),绝不影响测试本身。
 //
 // 脚本里用:
-//   import { petNotify } from './notify.mjs';
+//   import { petNotify } from '../desktop-pet/notify.mjs';
 //   await petNotify({ type: 'fail', title: '58 号库回归跑完', message: '40 过 18 挂,来看一眼' });
 //
 // 命令行用:
-//   node notify.mjs fail "回归跑完" "40 过 18 挂"
+//   node desktop-pet/notify.mjs fail "回归跑完" "40 过 18 挂"
 //   type 可选 success / fail / attention / info
 import { fileURLToPath } from 'node:url';
 

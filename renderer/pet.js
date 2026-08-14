@@ -12,10 +12,28 @@ let revertTimer = null;
 let frameTimer = null;
 
 // ── 状态切换 ──
+let motionMode = 'still';
+let facing = 1; // 1 朝右(原图方向),-1 镜像朝左
+
+function refreshClasses() {
+  wrap.className = `pet-wrap state-${state}`
+    + (hasFrames() ? ' skin-img' : '')
+    + (motionMode === 'walk' ? ' moving-walk' : '')
+    + (motionMode === 'dash' ? ' moving-dash' : '')
+    + (motionMode === 'fall' ? ' moving-fall' : '');
+}
+
 function setState(next) {
   state = next;
-  wrap.className = `pet-wrap state-${next}` + (hasFrames() ? ' skin-img' : '');
+  refreshClasses();
   playFrames();
+  reportBusy();
+}
+
+// 渲染层告诉主进程"现在忙不忙",忙就不闲逛
+function reportBusy() {
+  const busyNow = bubble.classList.contains('show') || (state !== 'idle' && state !== 'sleep');
+  window.pet.busy(busyNow, state === 'sleep');
 }
 
 function hasFrames() {
@@ -28,7 +46,7 @@ function playFrames() {
   clearInterval(frameTimer);
   if (!hasFrames()) return;
   const frames = assets.frames[state]
-    || (state === 'petted' ? assets.frames.success : null)
+    || (state === 'petted' || state === 'sleep' ? assets.frames.success : null)
     || assets.frames.idle || [];
   if (!frames.length) return;
   let i = 0;
@@ -65,24 +83,84 @@ function dismiss() {
   clearTimeout(hideTimer);
   clearTimeout(revertTimer);
   revertTimer = setTimeout(() => setState('idle'), 300);
+  reportBusy();
 }
 
 bubble.addEventListener('click', dismiss);
 
 // ── 收通知 ──
 window.pet.onNotify((p) => {
+  markActivity();
   setState(p.type === 'info' ? 'idle' : p.type);
   showBubble(p);
+  reportBusy();
+  if (p.type === 'success') spawnConfetti();
+});
+
+// ── 主进程的移动指令:切动画类 + 镜像朝向 ──
+window.pet.onMotion(({ mode, facing: f }) => {
+  motionMode = mode;
+  facing = f === -1 ? -1 : 1;
+  refreshClasses();
+  applySkinTransform();
 });
 
 // ── 右键菜单点选表情:纯换脸不弹气泡,点她一下或选「回待机」恢复 ──
 window.pet.onState((st) => {
+  markActivity();
   sticky = false;
   bubble.classList.remove('show');
   clearTimeout(hideTimer);
   clearTimeout(revertTimer);
+  if (st === 'sleep') sleepGraceUntil = Date.now() + 3000; // 菜单哄睡:3 秒内别被鼠标划过吵醒
   setState(st);
 });
+
+// ── 菜单特效 ──
+window.pet.onEffect((effect) => {
+  if (effect === 'confetti') spawnConfetti();
+});
+
+// ── 打瞌睡:白天 20 分钟没动静就睡(深夜 8 分钟),有动静就醒 ──
+let lastActivity = Date.now();
+let sleepGraceUntil = 0;
+
+function markActivity() {
+  lastActivity = Date.now();
+  if (state === 'sleep' && Date.now() > sleepGraceUntil) setState('idle'); // 吵醒
+}
+
+setInterval(() => {
+  if (state !== 'idle' || bubble.classList.contains('show') || dragging) return;
+  const h = new Date().getHours();
+  const napAfter = (h >= 23 || h < 6) ? 8 * 60e3 : 20 * 60e3;
+  if (Date.now() - lastActivity > napAfter) setState('sleep');
+}, 30e3);
+
+// 睡着时头顶冒 💤
+setInterval(() => {
+  if (state !== 'sleep') return;
+  const r = wrap.getBoundingClientRect();
+  spawnParticle(r.left + r.width * 0.62, r.top + r.height * 0.1, '💤');
+}, 1600);
+
+// ── 全过彩带 ──
+function spawnConfetti() {
+  const colors = ['#f87171', '#fbbf24', '#4ade80', '#60a5fa', '#c084fc', '#f472b6'];
+  const r = wrap.getBoundingClientRect();
+  for (let i = 0; i < 26; i++) {
+    const el = document.createElement('span');
+    el.className = 'confetti';
+    el.style.left = `${r.left + Math.random() * r.width}px`;
+    el.style.top = `${r.top - 10 + Math.random() * 30}px`;
+    el.style.backgroundColor = colors[i % colors.length];
+    el.style.animationDuration = `${0.9 + Math.random() * 0.9}s`;
+    el.style.animationDelay = `${Math.random() * 0.25}s`;
+    el.style.transform = `rotate(${Math.random() * 360}deg)`;
+    document.body.appendChild(el);
+    el.addEventListener('animationend', () => el.remove());
+  }
+}
 
 let greeted = false;
 window.pet.onAssets((m) => {
@@ -162,12 +240,16 @@ let moved = 0;
 let lastX = 0;
 let lastY = 0;
 
+let dragSamples = []; // 最近几个采样点,松手时算甩出速度
+
 wrap.addEventListener('mousedown', (e) => {
   if (e.button !== 0) return;
   dragging = true;
   moved = 0;
   lastX = e.screenX;
   lastY = e.screenY;
+  dragSamples = [{ t: performance.now(), x: e.screenX, y: e.screenY }];
+  markActivity();
 });
 window.addEventListener('mousemove', (e) => {
   if (!dragging) return;
@@ -178,15 +260,25 @@ window.addEventListener('mousemove', (e) => {
     window.pet.drag(dx, dy);
     lastX = e.screenX;
     lastY = e.screenY;
+    dragSamples.push({ t: performance.now(), x: e.screenX, y: e.screenY });
+    if (dragSamples.length > 8) dragSamples.shift();
   }
 });
 window.addEventListener('mouseup', (e) => {
   if (!dragging) return;
   dragging = false;
-  window.pet.dragEnd();
+  // 用最近 ~100ms 的位移换算成 px/秒,给主进程做抛掷惯性
+  let vel = { vx: 0, vy: 0 };
+  const now = performance.now();
+  const old = dragSamples.find((s) => now - s.t < 120) || dragSamples[0];
+  if (old && now - old.t > 10) {
+    const k = 1000 / (now - old.t);
+    vel = { vx: (e.screenX - old.x) * k, vy: (e.screenY - old.y) * k };
+  }
+  window.pet.dragEnd(vel);
   if (moved < 5 && e.button === 0) {
     if (bubble.classList.contains('show')) dismiss();
-    else if (state !== 'idle') setState('idle'); // 菜单换的表情,点一下也能收回去
+    else if (state !== 'idle') setState('idle'); // 菜单换的表情/瞌睡,点一下收回去
   }
 });
 
@@ -209,15 +301,24 @@ function spawnParticle(x, y, char) {
   el.addEventListener('animationend', () => el.remove());
 }
 
+// 皮肤 transform 统一出口:镜像朝向 + 悬停倾身叠加
+let leanDeg = 0;
+let leanLift = 0;
+function applySkinTransform() {
+  const t = `scaleX(${facing}) rotate(${(leanDeg * facing).toFixed(1)}deg) translateY(${leanLift}px)`;
+  for (const el of skinEls) el.style.transform = t;
+}
 function leanToward(e) {
   const r = wrap.getBoundingClientRect();
   const dx = (e.clientX - (r.left + r.width / 2)) / r.width;   // -0.5 ~ 0.5
-  for (const el of skinEls) {
-    el.style.transform = `rotate(${(dx * 10).toFixed(1)}deg) translateY(-3px)`;
-  }
+  leanDeg = dx * 10;
+  leanLift = -3;
+  applySkinTransform();
 }
 function leanReset() {
-  for (const el of skinEls) el.style.transform = '';
+  leanDeg = 0;
+  leanLift = 0;
+  applySkinTransform();
 }
 
 // ── 双击:摸摸/爱抚 ──
@@ -225,6 +326,7 @@ let pettedTimer = null;
 const PURRS = ['咕噜咕噜~', '好舒服喵~', '蹭蹭你', '再摸一下嘛', '喵呜~ 干活都有劲了'];
 
 wrap.addEventListener('dblclick', () => {
+  markActivity();
   clearTimeout(pettedTimer);
   clearTimeout(hideTimer);
   clearTimeout(revertTimer);
@@ -263,6 +365,7 @@ window.addEventListener('mousemove', (e) => {
     if (!over) leanReset();
   }
   if (over && wrap.contains(document.elementFromPoint(e.clientX, e.clientY))) {
+    markActivity();
     leanToward(e);
     const now = performance.now();
     if (now - lastSpark > 110) {

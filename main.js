@@ -1,7 +1,7 @@
 // Lumitest 桌宠 - Electron 主进程
 // 职责:透明置顶小窗 + 本地通知接口(127.0.0.1)+ 右键菜单。
 // 机器差异一律走环境变量(PET_PORT),不写死路径(路径从 import.meta.url 推导)。
-import { app, BrowserWindow, ipcMain, Menu, screen } from 'electron';
+import { app, BrowserWindow, ipcMain, Menu, powerSaveBlocker, screen } from 'electron';
 import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -82,16 +82,160 @@ function createWindow() {
   });
 }
 
+// —— 行为引擎:散步/疯跑/抛掷下落,主进程负责挪窗口,渲染层只管画 ——
+// 速度一律 px/秒,按真实 dt 积分:即使定时器被系统降频,移动速度也不变
+const TICK_MS = 33; // 目标 ~30fps
+const WALK_SPEED = 60;
+const DASH_SPEED = 1600;   // 疯跑:满屏嗖嗖嗖
+const GRAVITY = 2600;
+const motion = { mode: 'still', vx: 0, vy: 0, facing: 1 };
+let busy = false;      // 渲染层报告:有气泡或非待机表情时不闲逛
+let sleeping = false;
+let lastTick = Date.now();
+
+function workAreaOfPet() {
+  return screen.getDisplayMatching(win.getBounds()).workArea;
+}
+function floorY(wa) { return wa.y + wa.height - WIN_H; }
+
+function setMotion(mode) {
+  if (motion.mode === mode) return;
+  motion.mode = mode;
+  if (mode === 'still') {
+    motion.vx = 0; motion.vy = 0;
+    if (win) { const [x, y] = win.getPosition(); saveState({ x, y }); }
+  }
+  win?.webContents.send('pet-motion', { mode, facing: motion.facing });
+}
+function setFacing(f) {
+  if (motion.facing === f) return;
+  motion.facing = f;
+  win?.webContents.send('pet-motion', { mode: motion.mode, facing: f });
+}
+
+setInterval(() => {
+  const now = Date.now();
+  const dt = Math.min((now - lastTick) / 1000, 0.1);
+  lastTick = now;
+  if (!win || motion.mode === 'still') return;
+  const wa = workAreaOfPet();
+  const fy = floorY(wa);
+  let [x, y] = win.getPosition();
+  const minX = wa.x - 30, maxX = wa.x + wa.width - WIN_W + 30;
+  const minY = wa.y - 20;
+
+  if (motion.mode === 'fall') {
+    motion.vy += GRAVITY * dt;
+    x += motion.vx * dt; y += motion.vy * dt;
+    if (x < minX) { x = minX; motion.vx = -motion.vx * 0.6; setFacing(1); }
+    if (x > maxX) { x = maxX; motion.vx = -motion.vx * 0.6; setFacing(-1); }
+    if (y >= fy) {
+      y = fy;
+      if (Math.abs(motion.vy) > 260) {      // 落地弹跳,衰减
+        motion.vy = -motion.vy * 0.45;
+        motion.vx *= 0.7;
+      } else {
+        setMotion('still');
+      }
+    }
+    win.setPosition(Math.round(x), Math.round(y));
+  } else if (motion.mode === 'dash') {
+    // 二维满屏飞:直线冲刺,撞四边反弹,偶尔随机小变向
+    x += motion.vx * dt; y += motion.vy * dt;
+    if (x < minX) { x = minX; motion.vx = Math.abs(motion.vx); }
+    if (x > maxX) { x = maxX; motion.vx = -Math.abs(motion.vx); }
+    if (y < minY) { y = minY; motion.vy = Math.abs(motion.vy); }
+    if (y > fy)   { y = fy;   motion.vy = -Math.abs(motion.vy); }
+    if (Math.random() < dt * 1.5) {         // 平均每 0.7 秒抖一次方向
+      const a = Math.atan2(motion.vy, motion.vx) + (Math.random() - 0.5) * 0.7;
+      motion.vx = Math.cos(a) * DASH_SPEED;
+      motion.vy = Math.sin(a) * DASH_SPEED;
+    }
+    setFacing(motion.vx >= 0 ? 1 : -1);
+    win.setPosition(Math.round(x), Math.round(y));
+  } else { // walk
+    y = y < fy - 3 ? Math.min(fy, y + 260 * dt) : fy; // 先落到"地面"
+    x += WALK_SPEED * dt * motion.facing;
+    if (x <= minX || x >= maxX) {
+      x = Math.max(minX, Math.min(maxX, x));
+      setFacing(-motion.facing);
+    }
+    win.setPosition(Math.round(x), Math.round(y));
+  }
+}, TICK_MS);
+
+// 召唤:停下一切,回主屏右下角,置顶露脸并挥手
+function summon() {
+  if (!win) return;
+  setMotion('still');
+  const { workArea } = screen.getPrimaryDisplay();
+  const x = workArea.x + workArea.width - WIN_W - 24;
+  const y = workArea.y + workArea.height - WIN_H - 8;
+  win.setPosition(x, y);
+  saveState({ x, y });
+  win.show();
+  win.moveTop();
+  win.webContents.send('pet-state', 'hello');
+  setTimeout(() => win?.webContents.send('pet-state', 'idle'), 2200);
+}
+
+// 疯跑起手:随机一个偏上的方向起飞
+function launchDash() {
+  const a = (Math.random() * 0.6 + 0.2) * Math.PI; // 36°~144°,朝上扇形
+  motion.vx = Math.cos(a) * DASH_SPEED * (Math.random() < 0.5 ? 1 : -1);
+  motion.vy = -Math.abs(Math.sin(a)) * DASH_SPEED;
+  setFacing(motion.vx >= 0 ? 1 : -1);
+  setMotion('dash');
+}
+
+// 闲逛调度:2~5 分钟一次,55% 散步 / 20% 疯跑 / 25% 歇着
+function scheduleWander() {
+  const delay = (120 + Math.random() * 180) * 1000;
+  setTimeout(() => {
+    if (win && !busy && !sleeping && motion.mode === 'still') {
+      const r = Math.random();
+      if (r < 0.55) {
+        setFacing(Math.random() < 0.5 ? -1 : 1);
+        setMotion('walk');
+        setTimeout(() => { if (motion.mode === 'walk') setMotion('still'); }, 10000 + Math.random() * 12000);
+      } else if (r < 0.75) {
+        launchDash();
+        setTimeout(() => { if (motion.mode === 'dash') setMotion('fall'); }, 3000 + Math.random() * 2500);
+      }
+    }
+    scheduleWander();
+  }, delay);
+}
+scheduleWander();
+
+ipcMain.on('pet-busy', (_e, p) => {
+  busy = !!p?.busy;
+  sleeping = !!p?.sleeping;
+  if (busy && (motion.mode === 'walk' || motion.mode === 'dash')) setMotion('still');
+});
+
 // —— 拖动:渲染进程发屏幕坐标增量,主进程挪窗口 ——
 ipcMain.on('pet-drag', (_e, { dx, dy }) => {
   if (!win) return;
+  if (motion.mode !== 'still') setMotion('still'); // 被抓住就停下
   const [x, y] = win.getPosition();
   win.setPosition(x + dx, y + dy);
 });
-ipcMain.on('pet-drag-end', () => {
+// 松手:悬空或甩得快就进入抛掷下落,否则原地记位置
+ipcMain.on('pet-drag-end', (_e, vel) => {
   if (!win) return;
   const [x, y] = win.getPosition();
-  saveState({ x, y });
+  const fy = floorY(workAreaOfPet());
+  const vx = Number(vel?.vx) || 0; // px/秒
+  const vy = Number(vel?.vy) || 0;
+  if (y < fy - 6 || Math.abs(vx) > 200) {
+    motion.vx = Math.max(-1600, Math.min(1600, vx));
+    motion.vy = Math.max(-1600, Math.min(1600, vy));
+    if (Math.abs(motion.vx) > 60) setFacing(motion.vx > 0 ? 1 : -1);
+    setMotion('fall');
+  } else {
+    saveState({ x, y });
+  }
 });
 
 // 光标在猫/气泡上 → 接管鼠标;离开 → 恢复穿透
@@ -117,6 +261,31 @@ ipcMain.on('pet-context', () => {
         face('😌 回待机', 'idle'),
       ],
     },
+    {
+      label: '玩一下',
+      submenu: [
+        {
+          label: '🚶 出去散步',
+          click: () => {
+            setFacing(Math.random() < 0.5 ? -1 : 1);
+            setMotion('walk');
+            setTimeout(() => { if (motion.mode === 'walk') setMotion('still'); }, 15000);
+          },
+        },
+        {
+          label: '🛫 疯跑一圈',
+          click: () => {
+            launchDash();
+            setTimeout(() => { if (motion.mode === 'dash') setMotion('fall'); }, 4000);
+          },
+        },
+        { label: '🎉 放彩带', click: () => win?.webContents.send('pet-effect', 'confetti') },
+        { label: '😴 睡觉', click: () => win?.webContents.send('pet-state', 'sleep') },
+        { type: 'separator' },
+        { label: '🧍 停下别动', click: () => setMotion('still') },
+        { label: '🏠 回到右下角', click: () => summon() },
+      ],
+    },
     { label: '重新加载形象', click: () => { win?.reload(); } },
     { type: 'separator' },
     { label: '退出桌宠', click: () => app.quit() },
@@ -130,7 +299,32 @@ function startServer() {
   const server = http.createServer((req, res) => {
     if (req.method === 'GET' && req.url === '/health') {
       res.writeHead(200, { 'Content-Type': 'application/json' });
-      return res.end(JSON.stringify({ ok: true, pet: 'lumitest' }));
+      return res.end(JSON.stringify({
+        ok: true, pet: 'lumitest',
+        motion: motion.mode, facing: motion.facing,
+        pos: win ? win.getPosition() : null,
+      }));
+    }
+    // 召唤:回主屏右下角并置顶露脸
+    if (req.method === 'GET' && req.url === '/summon') {
+      summon();
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ ok: true }));
+    }
+    // 调试用:手动让她散步/疯跑/停下
+    if (req.method === 'GET' && req.url?.startsWith('/wander')) {
+      const mode = new URL(req.url, 'http://x').searchParams.get('mode') || 'walk';
+      if (mode === 'still') setMotion('still');
+      else if (mode === 'dash') {
+        launchDash();
+        setTimeout(() => { if (motion.mode === 'dash') setMotion('fall'); }, 4000);
+      } else if (mode === 'walk') {
+        setFacing(Math.random() < 0.5 ? -1 : 1);
+        setMotion('walk');
+        setTimeout(() => { if (motion.mode === 'walk') setMotion('still'); }, 15000);
+      }
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ ok: true, motion: motion.mode }));
     }
     // 调试用:抓当前桌宠窗口画面(含透明通道),返回 PNG
     if (req.method === 'GET' && req.url === '/shot') {
@@ -155,6 +349,7 @@ function startServer() {
             // 坏消息(fail/attention/urgent/cry/angry)默认停留到你点掉为止,success/info 自动消失
             sticky: p.sticky ?? ['fail', 'attention', 'urgent', 'cry', 'angry'].includes(type),
           };
+          setMotion('still'); // 来正事了,别逛了
           win?.webContents.send('pet-notify', payload);
           if (payload.sticky) { win?.show(); win?.moveTop(); }
           res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -181,6 +376,8 @@ if (!gotLock) {
 } else {
   app.whenReady().then(() => {
     if (process.platform === 'darwin') app.dock?.hide();
+    // 阻止 macOS App Nap 把后台定时器降频,否则散步/疯跑会慢成三分之一速
+    powerSaveBlocker.start('prevent-app-suspension');
     createWindow();
     startServer();
   });
