@@ -1,4 +1,4 @@
-// Lumitest 桌宠 - 渲染进程逻辑:状态机、气泡、拖动、换肤
+// funda-test 桌宠 - 渲染进程逻辑:状态机、气泡、拖动、换肤
 const wrap = document.getElementById('petWrap');
 const img = document.getElementById('petImg');
 const bubble = document.getElementById('bubble');

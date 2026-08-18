@@ -20,8 +20,8 @@ for (const p of [
 }
 const PORT = Number(process.env.PET_PORT || 38999);
 const OWNER = (process.env.PET_OWNER || '').trim();
-const WIN_W = 196;
-const WIN_H = 224;
+const WIN_W = 164;
+const WIN_H = 192;
 
 let win = null;
 
@@ -180,8 +180,7 @@ function summon() {
   saveState({ x, y });
   win.show();
   win.moveTop();
-  win.webContents.send('pet-state', 'hello');
-  setTimeout(() => win?.webContents.send('pet-state', 'idle'), 2200);
+  win.webContents.send('pet-state', 'hello'); // hello 由渲染层自己超时回待机,不会盖掉随后到的通知
 }
 
 // 疯跑起手:随机一个偏上的方向起飞
