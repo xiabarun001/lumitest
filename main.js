@@ -119,10 +119,20 @@ function setFacing(f) {
 }
 
 setInterval(() => {
+  try {
+    tickMove();
+  } catch (err) {
+    logError('tick', err);
+    setMotion('still'); // 移动出错就地停下,别把异常循环拖成卡死
+  }
+}, TICK_MS);
+
+function tickMove() {
   const now = Date.now();
   const dt = Math.min((now - lastTick) / 1000, 0.1);
   lastTick = now;
-  if (!win || motion.mode === 'still') return;
+  if (!win || win.isDestroyed() || motion.mode === 'still') return;
+  if (![motion.vx, motion.vy].every(Number.isFinite)) { setMotion('still'); return; }
   const wa = workAreaOfPet();
   const fy = floorY(wa);
   let [x, y] = win.getPosition();
@@ -167,7 +177,19 @@ setInterval(() => {
     }
     win.setPosition(Math.round(x), Math.round(y));
   }
-}, TICK_MS);
+}
+
+// 主进程异常落盘(userData/error.log),下次再出问题有据可查
+function logError(tag, err) {
+  try {
+    fs.appendFileSync(
+      path.join(app.getPath('userData'), 'error.log'),
+      `${new Date().toISOString()} [${tag}] ${err?.stack || err}\n`,
+    );
+  } catch {}
+}
+process.on('uncaughtException', (err) => logError('uncaught', err));
+process.on('unhandledRejection', (err) => logError('unhandledRejection', err));
 
 // 召唤:停下一切,回主屏右下角,置顶露脸并挥手
 function summon() {

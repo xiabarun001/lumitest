@@ -148,6 +148,7 @@ setInterval(() => {
 
 // ── 全过彩带 ──
 function spawnConfetti() {
+  if (document.getElementsByClassName('confetti').length > 80) return; // 同粒子的堆积保护
   const colors = ['#f87171', '#fbbf24', '#4ade80', '#60a5fa', '#c084fc', '#f472b6'];
   const r = wrap.getBoundingClientRect();
   for (let i = 0; i < 26; i++) {
@@ -161,6 +162,7 @@ function spawnConfetti() {
     el.style.transform = `rotate(${Math.random() * 360}deg)`;
     document.body.appendChild(el);
     el.addEventListener('animationend', () => el.remove());
+    setTimeout(() => el.remove(), 3000); // 兜底删除
   }
 }
 
@@ -294,6 +296,8 @@ const skinEls = [img, document.getElementById('petSvg')];
 let lastSpark = 0;
 
 function spawnParticle(x, y, char) {
+  // 上限保护:窗口被系统节流时 animationend 可能不触发,粒子堆积会拖死渲染进程
+  if (document.getElementsByClassName('particle').length > 40) return;
   const el = document.createElement('span');
   el.className = 'particle';
   el.textContent = char;
@@ -301,6 +305,7 @@ function spawnParticle(x, y, char) {
   el.style.top = `${y - 7}px`;
   document.body.appendChild(el);
   el.addEventListener('animationend', () => el.remove());
+  setTimeout(() => el.remove(), 2000); // 兜底删除,不依赖动画事件
 }
 
 // 皮肤 transform 统一出口:镜像朝向 + 悬停倾身叠加
